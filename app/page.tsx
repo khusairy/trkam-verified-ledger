@@ -1,7 +1,22 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Connection, clusterApiUrl, MemoProgram, PublicKey, Transaction } from '@solana/web3.js';
+import { Connection, clusterApiUrl, PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js';
+
+interface SolanaProvider {
+  isPhantom?: boolean;
+  isConnected?: boolean;
+  publicKey?: PublicKey;
+  connect: () => Promise<{ publicKey: PublicKey }>;
+  signTransaction?: (transaction: Transaction) => Promise<Transaction>;
+  signAndSendTransaction?: (transaction: Transaction) => Promise<{ signature: string }>;
+}
+
+declare global {
+  interface Window {
+    solana?: SolanaProvider;
+  }
+}
 
 interface VerifiedRecord {
   id: string;
@@ -16,6 +31,7 @@ interface VerifiedRecord {
   submitter: string;
   completedAt: string;
   memoData: string;
+  proofHash: string;
 }
 
 interface TeamStat {
@@ -31,6 +47,47 @@ const STORAGE_KEY = 'verifiedMatchRecords';
 const parseScore = (score: string) => {
   const [home, away] = score.split('-').map((part) => parseInt(part.trim(), 10));
   return { home: isNaN(home) ? 0 : home, away: isNaN(away) ? 0 : away };
+};
+
+const toHex = (buffer: ArrayBuffer) =>
+  Array.from(new Uint8Array(buffer))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+
+const generateProofHash = async (payload: string) => {
+  const encoded = new TextEncoder().encode(payload);
+  const digest = await crypto.subtle.digest('SHA-256', encoded);
+  return toHex(digest).slice(0, 16);
+};
+
+const createMemoPayload = async (params: {
+  date: string;
+  competition: string;
+  homeTeam: string;
+  awayTeam: string;
+  score: string;
+  referee: string;
+  rating: number;
+  submitter: string;
+}) => {
+  const basePayload = {
+    type: 'verified-match',
+    date: params.date,
+    competition: params.competition,
+    homeTeam: params.homeTeam,
+    awayTeam: params.awayTeam,
+    score: params.score,
+    referee: params.referee,
+    rating: params.rating,
+    submitter: params.submitter,
+    submittedAt: new Date().toISOString()
+  };
+
+  const initialJson = JSON.stringify(basePayload);
+  const proofHash = await generateProofHash(initialJson);
+  const memoData = JSON.stringify({ ...basePayload, proofHash });
+
+  return { memoData, proofHash };
 };
 
 export default function HomePage() {
@@ -97,7 +154,7 @@ export default function HomePage() {
         points: stats.points,
         reputation: Math.round((stats.points + stats.ratingSum / Math.max(stats.ratingCount, 1)) * 10) / 10,
         averageRating: Math.round((stats.ratingSum / Math.max(stats.ratingCount, 1)) * 10) / 10
-n      }))
+      }))
       .sort((a, b) => b.reputation - a.reputation || b.points - a.points || b.verifiedMatches - a.verifiedMatches);
   }, [records]);
 
@@ -107,13 +164,16 @@ n      }))
       setError('Phantom wallet is required for verification.');
       return;
     }
+
     try {
       const response = await window.solana.connect();
       setWalletAddress(response.publicKey.toString());
       window.localStorage.setItem('verifiedLedgerWallet', response.publicKey.toString());
       setError(null);
+      setStatus('Wallet connected. Ready to verify.');
     } catch (err) {
       setError('Wallet connection was cancelled.');
+      setStatus('Ready to verify');
     }
   };
 
@@ -131,14 +191,14 @@ n      }))
       if (!provider.isConnected) {
         await provider.connect();
       }
+
       const publicKey = provider.publicKey;
       if (!publicKey) throw new Error('Wallet public key not available.');
       setWalletAddress(publicKey.toString());
       window.localStorage.setItem('verifiedLedgerWallet', publicKey.toString());
 
       setStatus('Preparing verification record...');
-      const memoData = JSON.stringify({
-        type: 'verified-match',
+      const { memoData, proofHash } = await createMemoPayload({
         date,
         competition,
         homeTeam,
@@ -146,17 +206,33 @@ n      }))
         score,
         referee,
         rating,
-        submitter: publicKey.toString(),
-        submittedAt: new Date().toISOString()
+        submitter: publicKey.toString()
       });
 
-      const transaction = new Transaction().add(MemoProgram.memoInstruction(Buffer.from(memoData, 'utf8')));
+      const memoProgramId = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
+      const instruction = new TransactionInstruction({
+        keys: [],
+        programId: memoProgramId,
+        data: Buffer.from(memoData, 'utf8')
+      });
+
+      const transaction = new Transaction().add(instruction);
       transaction.feePayer = publicKey;
       transaction.recentBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
 
       setStatus('Sending transaction to Solana Devnet...');
-      const signed = await provider.signTransaction(transaction);
-      const signature = await connection.sendRawTransaction(signed.serialize());
+      let signature: string;
+
+      if (provider.signAndSendTransaction) {
+        const response = await provider.signAndSendTransaction(transaction);
+        signature = response.signature;
+      } else if (provider.signTransaction) {
+        const signed = await provider.signTransaction(transaction);
+        signature = await connection.sendRawTransaction(signed.serialize());
+      } else {
+        throw new Error('Wallet cannot sign transactions.');
+      }
+
       await connection.confirmTransaction(signature, 'confirmed');
 
       const newRecord: VerifiedRecord = {
@@ -171,7 +247,8 @@ n      }))
         signature,
         submitter: publicKey.toString(),
         completedAt: new Date().toISOString(),
-        memoData
+        memoData,
+        proofHash
       };
 
       setRecords((current) => [newRecord, ...current]);
@@ -203,7 +280,9 @@ n      }))
           <div className="wallet-card">
             <p>Wallet</p>
             <strong>{walletAddress ?? 'Not connected'}</strong>
-            <button className="button" onClick={connectWallet}>Connect Phantom</button>
+            <button className="button" onClick={connectWallet}>
+              {walletAddress ? 'Reconnect Phantom' : 'Connect Phantom'}
+            </button>
           </div>
           <div className="status-card">
             <p>Status</p>
@@ -306,6 +385,7 @@ n      }))
               {expandedIds.includes(record.id) ? (
                 <div className="proof-panel">
                   <div className="proof-row"><strong>Transaction signature</strong><span>{record.signature}</span></div>
+                  <div className="proof-row"><strong>Proof hash</strong><span>{record.proofHash}</span></div>
                   <div className="proof-row"><strong>Submitter</strong><span>{record.submitter}</span></div>
                   <div className="proof-row"><strong>Recorded</strong><span>{record.completedAt}</span></div>
                   <div className="proof-row proof-data">
