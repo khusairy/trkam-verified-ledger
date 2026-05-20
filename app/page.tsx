@@ -24,6 +24,9 @@ interface VerifiedRecord {
   competition: string;
   homeTeam: string;
   awayTeam: string;
+  venue: string;
+  homeScore: number;
+  awayScore: number;
   score: string;
   referee: string;
   rating: number;
@@ -34,20 +37,7 @@ interface VerifiedRecord {
   proofHash: string;
 }
 
-interface TeamStat {
-  team: string;
-  verifiedMatches: number;
-  reputation: number;
-  points: number;
-  averageRating: number;
-}
-
 const STORAGE_KEY = 'verifiedMatchRecords';
-
-const parseScore = (score: string) => {
-  const [home, away] = score.split('-').map((part) => parseInt(part.trim(), 10));
-  return { home: isNaN(home) ? 0 : home, away: isNaN(away) ? 0 : away };
-};
 
 const toHex = (buffer: ArrayBuffer) =>
   Array.from(new Uint8Array(buffer))
@@ -85,7 +75,9 @@ const createMemoPayload = async (params: {
   competition: string;
   homeTeam: string;
   awayTeam: string;
-  score: string;
+  venue: string;
+  homeScore: number;
+  awayScore: number;
   referee: string;
   rating: number;
   submitter: string;
@@ -93,11 +85,13 @@ const createMemoPayload = async (params: {
   const basePayload = {
     competition: params.competition,
     date: params.date,
+    venue: params.venue,
     homeTeam: params.homeTeam,
     awayTeam: params.awayTeam,
+    homeScore: params.homeScore,
+    awayScore: params.awayScore,
     rating: params.rating,
     referee: params.referee,
-    score: params.score,
     submitter: params.submitter,
     submittedAt: new Date().toISOString(),
     type: 'verified-match'
@@ -114,7 +108,9 @@ export default function HomePage() {
   const [records, setRecords] = useState<VerifiedRecord[]>([]);
   const [homeTeam, setHomeTeam] = useState('');
   const [awayTeam, setAwayTeam] = useState('');
-  const [score, setScore] = useState('1 - 0');
+  const [venue, setVenue] = useState('Community Field');
+  const [homeScore, setHomeScore] = useState(2);
+  const [awayScore, setAwayScore] = useState(1);
   const [competition, setCompetition] = useState('Grassroots Cup');
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [referee, setReferee] = useState('Referee Name');
@@ -148,7 +144,12 @@ export default function HomePage() {
   const teamStats = useMemo(() => {
     const map = new Map<string, { verifiedMatches: number; points: number; ratingSum: number; ratingCount: number }>();
     records.forEach((record) => {
-      const { home, away } = parseScore(record.score);
+      const home = typeof record.homeScore === 'number'
+        ? record.homeScore
+        : parseInt(record.score.split('-')[0]?.trim() ?? '', 10) || 0;
+      const away = typeof record.awayScore === 'number'
+        ? record.awayScore
+        : parseInt(record.score.split('-')[1]?.trim() ?? '', 10) || 0;
       const teamA = record.homeTeam;
       const teamB = record.awayTeam;
       const homePoints = home > away ? 3 : home === away ? 1 : 0;
@@ -191,7 +192,7 @@ export default function HomePage() {
       window.localStorage.setItem('verifiedLedgerWallet', response.publicKey.toString());
       setError(null);
       setStatus('Wallet connected. Ready to verify.');
-    } catch (err) {
+    } catch {
       setError('Wallet connection was cancelled.');
       setStatus('Ready to verify');
     }
@@ -221,9 +222,11 @@ export default function HomePage() {
       const { memoData, proofHash } = await createMemoPayload({
         date,
         competition,
+        venue,
         homeTeam,
         awayTeam,
-        score,
+        homeScore,
+        awayScore,
         referee,
         rating,
         submitter: publicKey.toString()
@@ -255,13 +258,17 @@ export default function HomePage() {
 
       await connection.confirmTransaction(signature, 'confirmed');
 
+      const scoreDisplay = `${homeScore} - ${awayScore}`;
       const newRecord: VerifiedRecord = {
         id: signature,
         date,
         competition,
         homeTeam,
         awayTeam,
-        score,
+        venue,
+        homeScore,
+        awayScore,
+        score: scoreDisplay,
         referee,
         rating,
         signature,
@@ -273,8 +280,8 @@ export default function HomePage() {
 
       setRecords((current) => [newRecord, ...current]);
       setStatus('Match verified successfully.');
-    } catch (err) {
-      setError((err as Error)?.message ?? 'Verification failed.');
+    } catch (error) {
+      setError((error as Error)?.message ?? 'Verification failed.');
       setStatus('Ready to verify');
     }
   };
@@ -329,8 +336,18 @@ export default function HomePage() {
               <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             </div>
             <div>
-              <label>Score</label>
-              <input value={score} onChange={(e) => setScore(e.target.value)} placeholder="2 - 1" />
+              <label>Venue</label>
+              <input value={venue} onChange={(e) => setVenue(e.target.value)} placeholder="Community Field" />
+            </div>
+          </div>
+          <div className="field-row split">
+            <div>
+              <label>Home team score</label>
+              <input type="number" min="0" value={homeScore} onChange={(e) => setHomeScore(Number(e.target.value))} />
+            </div>
+            <div>
+              <label>Away team score</label>
+              <input type="number" min="0" value={awayScore} onChange={(e) => setAwayScore(Number(e.target.value))} />
             </div>
           </div>
           <div className="field-row">
@@ -395,7 +412,7 @@ export default function HomePage() {
               <div className="record-summary">
                 <div>
                   <p className="record-title">{record.homeTeam} {record.score} {record.awayTeam}</p>
-                  <p className="record-meta">{record.date} · {record.competition} · Referee: {record.referee}</p>
+                  <p className="record-meta">{record.date} · {record.competition} · {record.venue} · Referee: {record.referee}</p>
                 </div>
                 <button className="link-button" onClick={() => toggleExpand(record.id)}>
                   {expandedIds.includes(record.id) ? 'Hide verification proof' : 'Show verification proof'}
