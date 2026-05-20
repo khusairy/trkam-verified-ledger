@@ -24,7 +24,9 @@ interface VerifiedRecord {
   competition: string;
   homeTeam: string;
   awayTeam: string;
-  score: string;
+  homeScore: number;
+  awayScore: number;
+  venue: string;
   referee: string;
   rating: number;
   signature: string;
@@ -44,9 +46,8 @@ interface TeamStat {
 
 const STORAGE_KEY = 'verifiedMatchRecords';
 
-const parseScore = (score: string) => {
-  const [home, away] = score.split('-').map((part) => parseInt(part.trim(), 10));
-  return { home: isNaN(home) ? 0 : home, away: isNaN(away) ? 0 : away };
+const formatScoreDisplay = (homeScore: number, awayScore: number) => {
+  return `${homeScore} - ${awayScore}`;
 };
 
 const toHex = (buffer: ArrayBuffer) =>
@@ -85,7 +86,9 @@ const createMemoPayload = async (params: {
   competition: string;
   homeTeam: string;
   awayTeam: string;
-  score: string;
+  homeScore: number;
+  awayScore: number;
+  venue: string;
   referee: string;
   rating: number;
   submitter: string;
@@ -95,9 +98,11 @@ const createMemoPayload = async (params: {
     date: params.date,
     homeTeam: params.homeTeam,
     awayTeam: params.awayTeam,
+    homeScore: params.homeScore,
+    awayScore: params.awayScore,
+    venue: params.venue,
     rating: params.rating,
     referee: params.referee,
-    score: params.score,
     submitter: params.submitter,
     submittedAt: new Date().toISOString(),
     type: 'verified-match'
@@ -114,7 +119,9 @@ export default function HomePage() {
   const [records, setRecords] = useState<VerifiedRecord[]>([]);
   const [homeTeam, setHomeTeam] = useState('');
   const [awayTeam, setAwayTeam] = useState('');
-  const [score, setScore] = useState('1 - 0');
+  const [homeScore, setHomeScore] = useState(0);
+  const [awayScore, setAwayScore] = useState(0);
+  const [venue, setVenue] = useState('');
   const [competition, setCompetition] = useState('Grassroots Cup');
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [referee, setReferee] = useState('Referee Name');
@@ -148,7 +155,8 @@ export default function HomePage() {
   const teamStats = useMemo(() => {
     const map = new Map<string, { verifiedMatches: number; points: number; ratingSum: number; ratingCount: number }>();
     records.forEach((record) => {
-      const { home, away } = parseScore(record.score);
+      const home = record.homeScore;
+      const away = record.awayScore;
       const teamA = record.homeTeam;
       const teamB = record.awayTeam;
       const homePoints = home > away ? 3 : home === away ? 1 : 0;
@@ -223,7 +231,9 @@ export default function HomePage() {
         competition,
         homeTeam,
         awayTeam,
-        score,
+        homeScore,
+        awayScore,
+        venue,
         referee,
         rating,
         submitter: publicKey.toString()
@@ -261,7 +271,9 @@ export default function HomePage() {
         competition,
         homeTeam,
         awayTeam,
-        score,
+        homeScore,
+        awayScore,
+        venue,
         referee,
         rating,
         signature,
@@ -329,8 +341,18 @@ export default function HomePage() {
               <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             </div>
             <div>
-              <label>Score</label>
-              <input value={score} onChange={(e) => setScore(e.target.value)} placeholder="2 - 1" />
+              <label>Venue</label>
+              <input value={venue} onChange={(e) => setVenue(e.target.value)} placeholder="Stadium Name" />
+            </div>
+          </div>
+          <div className="field-row split">
+            <div>
+              <label>Home score</label>
+              <input type="number" min="0" value={homeScore} onChange={(e) => setHomeScore(Number(e.target.value))} />
+            </div>
+            <div>
+              <label>Away score</label>
+              <input type="number" min="0" value={awayScore} onChange={(e) => setAwayScore(Number(e.target.value))} />
             </div>
           </div>
           <div className="field-row">
@@ -394,8 +416,8 @@ export default function HomePage() {
             <article className="record" key={record.id}>
               <div className="record-summary">
                 <div>
-                  <p className="record-title">{record.homeTeam} {record.score} {record.awayTeam}</p>
-                  <p className="record-meta">{record.date} · {record.competition} · Referee: {record.referee}</p>
+                  <p className="record-title">{record.homeTeam} {formatScoreDisplay(record.homeScore, record.awayScore)} {record.awayTeam}</p>
+                  <p className="record-meta">{record.date} · {record.competition} · Venue: {record.venue || 'N/A'} · Referee: {record.referee}</p>
                 </div>
                 <button className="link-button" onClick={() => toggleExpand(record.id)}>
                   {expandedIds.includes(record.id) ? 'Hide verification proof' : 'Show verification proof'}
