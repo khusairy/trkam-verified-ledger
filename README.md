@@ -12,6 +12,10 @@
 
 The UI is designed to look like a football match ledger rather than a crypto dashboard. Technical Solana details are hidden behind the expandable proof section.
 
+## Live Demo
+
+https://trkam-verify.netlify.app/
+
 ## How to run locally
 
 1. Install dependencies:
