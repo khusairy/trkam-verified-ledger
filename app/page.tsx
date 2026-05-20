@@ -54,6 +54,26 @@ const toHex = (buffer: ArrayBuffer) =>
     .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('');
 
+const stableStringify = (value: unknown): string => {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+
+  if (Array.isArray(value)) {
+    return '[' + value.map((item) => stableStringify(item)).join(',') + ']';
+  }
+
+  const object = value as Record<string, unknown>;
+  const keys = Object.keys(object).sort();
+  return (
+    '{' +
+    keys
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(object[key])}`)
+      .join(',') +
+    '}'
+  );
+};
+
 const generateProofHash = async (payload: string) => {
   const encoded = new TextEncoder().encode(payload);
   const digest = await crypto.subtle.digest('SHA-256', encoded);
@@ -71,21 +91,21 @@ const createMemoPayload = async (params: {
   submitter: string;
 }) => {
   const basePayload = {
-    type: 'verified-match',
-    date: params.date,
     competition: params.competition,
+    date: params.date,
     homeTeam: params.homeTeam,
     awayTeam: params.awayTeam,
-    score: params.score,
-    referee: params.referee,
     rating: params.rating,
+    referee: params.referee,
+    score: params.score,
     submitter: params.submitter,
-    submittedAt: new Date().toISOString()
+    submittedAt: new Date().toISOString(),
+    type: 'verified-match'
   };
 
-  const initialJson = JSON.stringify(basePayload);
-  const proofHash = await generateProofHash(initialJson);
-  const memoData = JSON.stringify({ ...basePayload, proofHash });
+  const canonicalBase = stableStringify(basePayload);
+  const proofHash = await generateProofHash(canonicalBase);
+  const memoData = stableStringify({ ...basePayload, proofHash });
 
   return { memoData, proofHash };
 };

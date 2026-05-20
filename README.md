@@ -35,7 +35,7 @@ http://localhost:3000
 ## How Solana verification works
 
 - The app uses `@solana/web3.js` and the Solana Memo Program to create a small on-chain proof.
-- When a match is verified, the app builds a JSON memo payload with match details and a SHA-256 proof hash.
+- When a match is verified, the app builds a canonical JSON payload with alphabetically sorted keys and computes a SHA-256 proof hash.
 - That payload is sent as a Solana Devnet transaction memo from the connected Phantom wallet.
 - The memo transaction signature and payload are stored locally and displayed in the verification panel.
 
